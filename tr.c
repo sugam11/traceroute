@@ -27,6 +27,16 @@
 #define NI_MAXHOST	1025
 //#define SOCK_PATH "/Home/Downloads/echo_socket"
 
+
+//struct udphdr
+//{
+//    u_int16_t uh_sport; /* source port */
+//    u_int16_t uh_dport; /* destination port */
+//    u_int16_t uh_ulen; /* udp length */
+//    u_int16_t uh_sum; /* udp checksum */
+//};
+
+
 char recvbuf[BUFSIZE];
 char sendbuf[BUFSIZE];
 char* host;
@@ -361,7 +371,7 @@ int recv_v4(int seq, struct timeval* tv)
 				if(icmplen<(8+ hlen2 + 4))
 					continue;
 				udp = (struct udphdr*)(recvbuf + hlen1 + 8 + hlen2);
-				if(hip->ip_p == IPPROTO_UDP && udp->source == htons(sport) && udp->dest == htons(dport + seq))
+				if(hip->ip_p == IPPROTO_UDP && udp->uh_sport == htons(sport) && udp->uh_dport == htons(dport + seq))
 				{
 					ret = -2;//intermediate router
 					break;
