@@ -329,7 +329,8 @@ static void *doit(void *arg){
 	printf("new thread seq:%d",seq);
 	int code;
     double rtt;
-	for(int probe = 0; probe< no_of_probes; probe++)
+    int probe;
+	for(probe = 0; probe< no_of_probes; probe++)
 		{
 			rec = (struct rec *) sendbuf;
 			rec->rec_seq = ++seq;
