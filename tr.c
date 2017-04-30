@@ -21,21 +21,12 @@
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
+#include <pthread.h>
 // no port number in raw socket
 
 #define BUFSIZE 1500
 #define NI_MAXHOST	1025
 //#define SOCK_PATH "/Home/Downloads/echo_socket"
-
-
-//struct udphdr
-//{
-//    u_int16_t source; /* source port */
-//    u_int16_t dest; /* destination port */
-//    u_int16_t uh_ulen; /* udp length */
-//    u_int16_t uh_sum; /* udp checksum */
-//};
-
 
 char recvbuf[BUFSIZE];
 char sendbuf[BUFSIZE];
@@ -43,10 +34,11 @@ char* host;
 int datalen;  //after ICMP header
 u_short dport, sport;
 int no_of_sent;
-int probe, no_of_probes,ttl, max_ttl, verbose;
+int no_of_probes,ttl, max_ttl, verbose;
 int sendfd, recvfd; //send on UDP socket, recv on raw ICMP socket
 pid_t pid;
 int gotalarm;
+int done=0,seq=0;
 
 struct rec   //outgoing UDP data
 {
@@ -120,7 +112,7 @@ struct proto
 
 struct proto proto_v4 = {icmpcode_v4, recv_v4, NULL,NULL,NULL,NULL,0,IPPROTO_ICMP, IPPROTO_IP, IP_TTL};//defaults
 int datalen = sizeof(struct rec);
-int max_ttl = 30;
+int max_ttl = 3;
 int no_of_probes = 3;
 u_short dport = 32768 + 666;
 
@@ -275,12 +267,107 @@ int main(int argc, char ** argv)
 	exit(0);
 }
 
+/*static void *doit()
+{
+    //pthread_detach(pthread_self()); 
+    //printf("ttl:%d",ttl);
+    struct rec *rec;
+    pthread_t t = pthread_self();
+    int code;
+    double rtt;
+	struct timeval tvrecv;
+    setsockopt(sendfd, pr->ttllevel, pr->ttloptname, &ttl,sizeof(int));
+	bzero(pr->salast, pr->salen);
+	printf("ttl value = %d, %d\n", ttl,t);
+	fflush(stdout);
+	for(int probe = 0; probe< no_of_probes; probe++)
+	{
+		printf("inside for,%d\n",ttl);
+		rec = (struct rec *) sendbuf;
+		rec->rec_seq = ++seq;
+		rec->rec_ttl = ttl;
+		gettimeofday(&rec->rec_tv, NULL);
+		sock_set_port(pr->sasend, pr->salen, htons(dport + seq));
+		sendto(sendfd, sendbuf, datalen, 0 , pr->sasend, pr->salen);
+		if((code = (*pr->recv)(seq, &tvrecv)) == -3){
+			printf(" *,%d\n",ttl); //timeout, no reply
+			printf("if:%d",ttl);
+		}
+			
+		else
+		{
+			printf("code:%d\n",code);
+			char str[NI_MAXHOST];
+			if(sock_cmp_addr(pr->sarecv, pr->salast, pr->salen)!=0)
+			{
+				if(getnameinfo(pr->sarecv, pr->salen, str, sizeof(str),NULL,0,0)==0)
+					printf("%s (%s),%d\n", str, Sock_ntop_host(pr->sarecv, pr->salen),ttl);
+				else
+					printf("%s,%d\n", Sock_ntop_host(pr->sarecv, pr->salen),ttl);
+					memcpy(pr->salast, pr->sarecv, pr->salen);
+			}
+			tv_sub(&tvrecv, &rec->rec_tv);
+			rtt = tvrecv.tv_sec * 1000.0 + tvrecv.tv_usec / 1000.0;
+			printf("rtt = %f,%d\n",rtt,ttl );
+			if(code == -1) //unreachable at dest,////////work done
+				done++;
+			else if(code>=0)
+				printf("ICMP %s,%d\n", (*pr->icmpcode)(code),ttl);
+		}
+			fflush(stdout);
+	}
+	
+    return(NULL);
+}*/
+
+static void *doit(void *arg){
+
+	struct timeval tvrecv;
+	pthread_detach(pthread_self());
+	struct rec *rec;
+	int seq = (int) arg;
+	printf("new thread seq:%d",seq);
+	int code;
+    double rtt;
+	for(int probe = 0; probe< no_of_probes; probe++)
+		{
+			rec = (struct rec *) sendbuf;
+			rec->rec_seq = ++seq;
+			rec->rec_ttl = ttl;
+			gettimeofday(&rec->rec_tv, NULL);
+			sock_set_port(pr->sasend, pr->salen, htons(dport + seq));
+			sendto(sendfd, sendbuf, datalen, 0 , pr->sasend, pr->salen);
+			if((code = (*pr->recv)(seq, &tvrecv)) == -3)
+				printf(" *,%d\n",seq); //timeout, no reply
+			else
+			{
+				char str[NI_MAXHOST];
+				if(sock_cmp_addr(pr->sarecv, pr->salast, pr->salen)!=0)
+				{
+					if(getnameinfo(pr->sarecv, pr->salen, str, sizeof(str),NULL,0,0)==0)
+						printf("%s (%s),%d\n", str, Sock_ntop_host(pr->sarecv, pr->salen),seq);
+					else
+						printf("%s,%d\n", Sock_ntop_host(pr->sarecv, pr->salen),seq);
+					memcpy(pr->salast, pr->sarecv, pr->salen);
+				}
+				tv_sub(&tvrecv, &rec->rec_tv);
+				rtt = tvrecv.tv_sec * 1000.0 + tvrecv.tv_usec / 1000.0;
+				printf("rtt = %f,%d\n",rtt,seq );
+				if(code == -1) //unreachable at dest,////////work done
+					done++;
+				else if(code>=0)
+					printf("ICMP %s,%d\n", (*pr->icmpcode)(code),seq);
+			}
+			fflush(stdout);
+		}
+}
+
+
 void traceloop(void)
 {
-	int seq, code, done;
-	double rtt;
-	struct rec *rec;
-	struct timeval tvrecv;
+	
+	pthread_t tid[31];
+
 	if((recvfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto))<0)
 		err_sys("socket error");//recvfd
 	setuid(getuid());
@@ -290,49 +377,40 @@ void traceloop(void)
 	sock_set_port(pr->sabind, pr->salen, htons(sport));
 	bind(sendfd,pr->sabind, pr->salen);
 	sig_alrm(SIGALRM);
-	seq =0;done = 0;
+
+	/*for(ttl=1;ttl<max_ttl && done == 0;ttl++){
+		pthread_create(&tid[ttl],NULL,&doit,NULL);
+		//pthread_detach(tid);
+		printf("New thread Creation %d\n\n\n\n",tid[ttl]);
+	}
+	for(int i=1;i<max_ttl;i++){
+		pthread_join(&tid[i],NULL);
+		//pthread_detach(tid);
+		printf("thread joined %d,%d\n\n\n\n",tid[i],i);
+	}*/
+
 	for(ttl = 1; ttl<=max_ttl && done == 0; ttl++)
 	{
+		
 		setsockopt(sendfd, pr->ttllevel, pr->ttloptname, &ttl,sizeof(int));
 		bzero(pr->salast, pr->salen);
 		printf("ttl value = %d\n", ttl);
 		fflush(stdout);
-		for(probe = 0; probe< no_of_probes; probe++)
-		{
-			rec = (struct rec *) sendbuf;
-			rec->rec_seq = ++seq;
-			rec->rec_ttl = ttl;
-			gettimeofday(&rec->rec_tv, NULL);
-			sock_set_port(pr->sasend, pr->salen, htons(dport + seq));
-			sendto(sendfd, sendbuf, datalen, 0 , pr->sasend, pr->salen);
-			if((code = (*pr->recv)(seq, &tvrecv)) == -3)
-				printf(" *\n"); //timeout, no reply
-			else
-			{
-				char str[NI_MAXHOST];
-				if(sock_cmp_addr(pr->sarecv, pr->salast, pr->salen)!=0)
-				{
-					if(getnameinfo(pr->sarecv, pr->salen, str, sizeof(str),NULL,0,0)==0)
-						printf("%s (%s)\n", str, Sock_ntop_host(pr->sarecv, pr->salen));
-					else
-						printf("%s\n", Sock_ntop_host(pr->sarecv, pr->salen));
-					memcpy(pr->salast, pr->sarecv, pr->salen);
-				}
-				tv_sub(&tvrecv, &rec->rec_tv);
-				rtt = tvrecv.tv_sec * 1000.0 + tvrecv.tv_usec / 1000.0;
-				printf("rtt = %f\n",rtt );
-				if(code == -1) //unreachable at dest,////////work done
-					done++;
-				else if(code>=0)
-					printf("ICMP %s\n", (*pr->icmpcode)(code));
-			}
-			fflush(stdout);
-		}
+		pthread_create(&tid[ttl],NULL,&doit,(void *) seq);
+		seq = seq+3;
 	}
+
+	while(done==0){};
+	/*for(int i=1;i<=max_ttl;i++){
+		pthread_join(&tid[i],NULL);
+		//pthread_detach(tid);
+		printf("thread joined %d,%d\n\n\n\n",tid[i],i);
+	}*/
 }
 
 int recv_v4(int seq, struct timeval* tv)
 {
+	printf("seq:%d\n",seq);
 	int hlen1, hlen2, icmplen, ret;
 	socklen_t len;
 	ssize_t n;
